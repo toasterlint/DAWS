@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"io/ioutil"
 	"log"
@@ -10,27 +11,27 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nu7hatch/gouuid"
+
 	. "image"
 
+	"github.com/Azure/azure-service-bus-go"
 	"github.com/Pallinder/go-randomdata"
 	"github.com/gorilla/mux"
-	"github.com/streadway/amqp"
-	commonDAO "github.com/toasterlint/DAWS/common/dao"
-	commonModels "github.com/toasterlint/DAWS/common/models"
+	dao "github.com/toasterlint/DAWS/common/dao"
+	models "github.com/toasterlint/DAWS/common/models"
 	. "github.com/toasterlint/DAWS/common/utils"
-	worldDAO "github.com/toasterlint/DAWS/world_controller/dao"
-	"gopkg.in/mgo.v2/bson"
 )
 
-var conn *amqp.Connection
-var ch *amqp.Channel
-var worldq, worldtrafficq, worldcityq, cityjobq, trafficjobq amqp.Queue
-var msgs <-chan amqp.Delivery
+var connStr string
+var conn *servicebus.Namespace
+var worldQueue *servicebus.Queue
+var topic *servicebus.Topic
+var sub *servicebus.Subscription
 var runTrigger bool
-var controllers []commonModels.Controller
-var settings commonModels.Settings
-var dao = worldDAO.DAO{Server: "mongo.daws.xyz", Database: "daws", Username: "daws", Password: "daws"}
-var commondao = commonDAO.DAO{Server: "mongo.daws.xyz", Database: "daws", Username: "daws", Password: "daws"}
+var controllers []models.Controller
+var settings models.Settings
+var commonDAO = dao.DAO{Database: "world.db"}
 var numCities = 0
 var numBuildings = 0
 var numPeople = 0
@@ -40,88 +41,21 @@ func startHTTPServer() {
 	r := mux.NewRouter()
 	r.Handle("/", http.FileServer(http.Dir("./html")))
 	r.HandleFunc("/api/status", apiStatus).Methods("GET")
-	r.HandleFunc("/api/triggerNext", apiTrigger).Methods("GET")
+	//	r.HandleFunc("/api/triggerNext", apiTrigger).Methods("GET")
 	log.Fatal(http.ListenAndServe(":8080", r))
 }
 
 func connectQueues() {
 	var err error
-	conn, err = amqp.Dial("amqp://guest:guest@rabbitmq.daws.xyz:5672")
-	FailOnError(err, "Failed to connect to RabbitMQ")
+	connStr := "Endpoint=sb://dawsim.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=CzhNWYYYcDHZjnWsVH/Psg4YnP9JQkei2IGR11EkkY8="
+	conn, err = servicebus.NewNamespace(servicebus.NamespaceWithConnectionString(connStr))
+	FailOnError(err, "Failed to connect to ServiceBus")
 
-	ch, err = conn.Channel()
-	FailOnError(err, "Failed to open a channel")
-
-	worldq, err = ch.QueueDeclare(
-		"world_queue", //name
-		true,          // durable
-		false,         // delete when unused
-		false,         // exclusive
-		false,         // no-wait
-		nil,           // arguments
-	)
-	FailOnError(err, "Failed to declare queue")
-
-	worldtrafficq, err = ch.QueueDeclare(
-		"world_traffic_queue", //name
-		true,  // durable
-		false, // delete when unused
-		false, // exclusive
-		false, // no-wait
-		nil,   // arguments
-	)
-	FailOnError(err, "Failed to declare queue")
-
-	Logger.Printf("World Traffic Queue Consumers: %d", worldtrafficq.Consumers)
-
-	worldcityq, err = ch.QueueDeclare(
-		"world_city_queue", //name
-		true,               // durable
-		false,              // delete when unused
-		false,              // exclusive
-		false,              // no-wait
-		nil,                // arguments
-	)
-	FailOnError(err, "Failed to declare queue")
-
-	Logger.Printf("World City Queue Consumers: %d", worldcityq.Consumers)
-
-	cityjobq, err = ch.QueueDeclare(
-		"city_job_queue", // name
-		true,             // durable
-		false,            //delete when unused
-		false,            // exclusive
-		false,            // no wait
-		nil,              // arguments
-	)
-	FailOnError(err, "Failed to declare City Job Queue")
-
-	trafficjobq, err = ch.QueueDeclare(
-		"traffic_job_queue", // name
-		true,                // durable
-		false,               //delete when unused
-		false,               // exclusive
-		false,               // no wait
-		nil,                 // arguments
-	)
-	FailOnError(err, "Failed to declare Traffic Job Queue")
-
-	err = ch.Qos(
-		1,     //prefetch count
-		0,     //prefetch size
-		false, //global
-	)
-
-	msgs, err = ch.Consume(
-		worldq.Name, //queue
-		"",          //consumer
-		false,       //auto-ack
-		false,       //exclusive
-		false,       //no-local
-		false,       //no-wait
-		nil,         //args
-	)
-	FailOnError(err, "Failed to register a consumer")
+	worldQueue, err = conn.NewQueue("worldqueue")
+	FailOnError(err, "Failed to Open worldqueue")
+	topic, _ = conn.NewTopic(context.Background(), "worldbroadcast")
+	sub, _ = topic.NewSubscription(context.Background(), "testsub1")
+	Logger.Printf("Sub: %s", sub.Name)
 }
 
 func apiStatus(w http.ResponseWriter, r *http.Request) {
@@ -129,43 +63,43 @@ func apiStatus(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("API Call made: status"))
 }
 
-func apiTrigger(w http.ResponseWriter, r *http.Request) {
-	cityids, err := commondao.GetAllCityIDs()
-	FailOnError(err, "Failed to get city IDs")
-	msg := &commonModels.WorldTrafficQueueMessage{WorldSettings: settings}
-	triggerNext(cityids, msg)
-	LogToConsole("Manually Trigger")
-	w.Write([]byte("Manually triggered"))
-}
+//func apiTrigger(w http.ResponseWriter, r *http.Request) {
+//	cityids, err := commonDAO.GetAllCityIDs()
+//	FailOnError(err, "Failed to get city IDs")
+//	msg := &models.WorldTrafficQueueMessage{WorldSettings: settings}
+//	triggerNext(cityids, msg)
+//	LogToConsole("Manually Trigger")
+//	w.Write([]byte("Manually triggered"))
+//}
 
-func triggerNext(cities []commonDAO.Mongoid, worldtrafficmessage *commonModels.WorldTrafficQueueMessage) {
-	tempMsgJSON, _ := json.Marshal(worldtrafficmessage)
-	err := ch.Publish(
-		"",                 // exchange
-		worldtrafficq.Name, // routing key
-		false,              // mandatory
-		false,
-		amqp.Publishing{
-			DeliveryMode: amqp.Persistent,
-			ContentType:  "application/json",
-			Body:         []byte(tempMsgJSON),
-		})
-	FailOnError(err, "Failed to post to World Traffic Queue")
-	for _, element := range cities {
-		tempMsg := &commonModels.WorldCityQueueMessage{WorldSettings: settings, City: element.ID.Hex()}
-		tempMsgJSON, _ := json.Marshal(tempMsg)
-		err := ch.Publish(
-			"",              // exchange
-			worldcityq.Name, // routing key
-			false,           // mandatory
-			false,
-			amqp.Publishing{
-				DeliveryMode: amqp.Persistent,
-				ContentType:  "application/json",
-				Body:         []byte(tempMsgJSON),
-			})
-		FailOnError(err, "Failed to post to World City Queue")
-	}
+func triggerNext(cities []uuid.UUID, worldtrafficmessage *models.WorldTrafficQueueMessage) {
+	//tempMsgJSON, _ := json.Marshal(worldtrafficmessage)
+	//	err := ch.Publish(
+	//		"",                 // exchange
+	//		worldtrafficq.Name, // routing key
+	//		false,              // mandatory
+	//		false,
+	//		amqp.Publishing{
+	//			DeliveryMode: amqp.Persistent,
+	//			ContentType:  "application/json",
+	//			Body:         []byte(tempMsgJSON),
+	//		})
+	//	FailOnError(err, "Failed to post to World Traffic Queue")
+	//	for _, element := range cities {
+	//		tempMsg := &models.WorldCityQueueMessage{WorldSettings: settings, City: element.ID.Hex()}
+	//		tempMsgJSON, _ := json.Marshal(tempMsg)
+	//		err := ch.Publish(
+	//			"",              // exchange
+	//			worldcityq.Name, // routing key
+	//			false,           // mandatory
+	//			false,
+	//			amqp.Publishing{
+	//				DeliveryMode: amqp.Persistent,
+	//				ContentType:  "application/json",
+	//				Body:         []byte(tempMsgJSON),
+	//			})
+	//		FailOnError(err, "Failed to post to World City Queue")
+	//	}
 }
 
 func processTrigger() {
@@ -173,6 +107,10 @@ func processTrigger() {
 	go printStatus()
 	for runTrigger {
 		time.Sleep(time.Microsecond * 500)
+		message := servicebus.Message{Data: []byte("This is a test!!!!!!!!!!!!")}
+		worldQueue.Send(context.Background(), &message)
+		err := topic.Send(context.Background(), &message)
+		FailOnError(err, "Failed to send message to topic")
 		// first check if all controllers are ready (and that we have any)
 		if len(controllers) == 0 {
 			LogToConsole("No controllers")
@@ -213,40 +151,50 @@ func processTrigger() {
 		if dur > time.Duration(settings.WorldSpeed)*time.Millisecond {
 			LogToConsole("Warning: world processing too slow, last duration was - " + dur.String())
 		}
-		cityids, err := commondao.GetAllCityIDs()
-		FailOnError(err, "Failed to get city IDs")
-		msg := &commonModels.WorldTrafficQueueMessage{WorldSettings: settings}
-		triggerNext(cityids, msg)
+		//		cityids, err := commonDAO.GetAllCityIDs()
+		//		FailOnError(err, "Failed to get city IDs")
+		//		msg := &models.WorldTrafficQueueMessage{WorldSettings: settings}
+		//		triggerNext(cityids, msg)
 		settings.LastTime = settings.LastTime.Add(time.Second * 1)
 		realLastTime = time.Now()
 	}
 }
 
 func processMsgs() {
-	for d := range msgs {
-		tempController := commonModels.Controller{}
-		json.Unmarshal(d.Body, &tempController)
-		found := false
-		var tempRemove int
-		for i := range controllers {
-			if controllers[i].ID == tempController.ID {
-				found = true
-				controllers[i].Ready = tempController.Ready
-				tempRemove = i
-				break
-			}
-		}
-		//LogToConsole("Controller found stats: " + strconv.FormatBool(found))
-		if found == false {
-			controllers = append(controllers, tempController)
-		}
-		// Remove the controller if it sent exit true
-		if tempController.Exit == true {
-			controllers = append(controllers[:tempRemove], controllers[tempRemove+1:]...)
-		}
-		//LogToConsole("Done")
-		d.Ack(false)
-	}
+	//	for d := range msgs {
+	//		tempController := models.Controller{}
+	//		json.Unmarshal(d.Body, &tempController)
+	//		found := false
+	//		var tempRemove int
+	//		for i := range controllers {
+	//			if controllers[i].ID == tempController.ID {
+	//				found = true
+	//				controllers[i].Ready = tempController.Ready
+	//				tempRemove = i
+	//				break
+	//			}
+	//		}
+	//		//LogToConsole("Controller found stats: " + strconv.FormatBool(found))
+	//		if found == false {
+	//			controllers = append(controllers, tempController)
+	//		}
+	//		// Remove the controller if it sent exit true
+	//		if tempController.Exit == true {
+	//			controllers = append(controllers[:tempRemove], controllers[tempRemove+1:]...)
+	//		}
+	//		//LogToConsole("Done")
+	//		d.Ack(false)
+	//	}
+	listener, err := sub.Receive(context.Background(), func(ctx context.Context, msg *servicebus.Message) servicebus.DispositionAction {
+		Logger.Println(string(msg.Data))
+		return msg.Complete()
+	})
+	FailOnError(err, "Failed to start listener")
+	defer listener.Close(context.Background())
+
+	// Loop main thread
+	forever := make(chan bool)
+	<-forever
 }
 
 func runConsole() {
@@ -259,15 +207,15 @@ ReadCommand:
 	switch text {
 	case "exit":
 		Logger.Print("Purging queues")
-		_, err := ch.QueuePurge(worldcityq.Name, false)
-		FailOnError(err, "Failed to purge World City Queue")
-		_, err = ch.QueuePurge(worldtrafficq.Name, false)
-		FailOnError(err, "Failed to purge World Traffic Queue")
-		_, err = ch.QueuePurge(worldq.Name, false)
-		FailOnError(err, "Failed to purge World Queue")
+		//		_, err := ch.QueuePurge(worldcityq.Name, false)
+		//		FailOnError(err, "Failed to purge World City Queue")
+		//		_, err = ch.QueuePurge(worldtrafficq.Name, false)
+		//		FailOnError(err, "Failed to purge World Traffic Queue")
+		//		_, err = ch.QueuePurge(worldq.Name, false)
+		//		FailOnError(err, "Failed to purge World Queue")
 		Logger.Println("Saving settings...")
-		err = dao.SaveSettings(settings)
-		FailOnError(err, "Failed to save settings")
+		//		err = commonDAO.SaveSettings(settings)
+		//		FailOnError(err, "Failed to save settings")
 		Logger.Println("Exiting...")
 		os.Exit(0)
 	case "status":
@@ -310,31 +258,30 @@ ReadCommand:
 }
 
 func loadConfig() {
-	dao.Connect()
-	commondao.Connect()
 	var err error
-	settings, err = dao.LoadSettings()
+	settings = models.Settings{}
+	//settings, err = commonDAO.LoadSettings()
 	FailOnError(err, "Failed to load settings")
-	if settings.ID.Valid() {
+	if settings.LastTime != (time.Time{}) {
 		sett, _ := json.Marshal(settings)
 		Logger.Println(string(sett))
 	} else {
 		LogToConsole("No settings found, creating defaults")
-		var tempSettings commonModels.Settings
+		var tempSettings models.Settings
 		tempSettings.CarAccidentFatalityRate = 0.0001159
-		tempSettings.ID = bson.NewObjectId()
+		tempSettings.ID, _ = uuid.NewV4()
 		tempSettings.LastTime = time.Now()
 		tempSettings.MurderRate = 0.000053
 		tempSettings.ViolentCrimeRate = 0.00381
 		tempSettings.WorldSpeed = 5000
-		var speeds = []commonModels.SpeedLimit{}
-		var citySpeed = commonModels.SpeedLimit{Location: "city", Value: 35}
-		var noncitySpeed = commonModels.SpeedLimit{Location: "noncity", Value: 70}
+		var speeds = []models.SpeedLimit{}
+		var citySpeed = models.SpeedLimit{Location: "city", Value: 35}
+		var noncitySpeed = models.SpeedLimit{Location: "noncity", Value: 70}
 		speeds = append(speeds, citySpeed)
 		speeds = append(speeds, noncitySpeed)
 		tempSettings.SpeedLimits = speeds
-		tempSettings.Diseases = []commonModels.Disease{}
-		err := dao.InsertSettings(tempSettings)
+		tempSettings.Diseases = []models.Disease{}
+		//err := commonDAO.InsertSettings(tempSettings)
 		settings = tempSettings
 		FailOnError(err, "Failed to insert settings")
 	}
@@ -369,15 +316,15 @@ func printStatus() {
 }
 
 func main() {
+	commonDAO.Open()
+	defer commonDAO.Close()
 	// Set some initial variables
 	InitLogger()
 	loadConfig()
-	controllers = []commonModels.Controller{}
+	controllers = []models.Controller{}
 
 	//init rabbit
 	connectQueues()
-	defer conn.Close()
-	defer ch.Close()
 	go processMsgs()
 
 	// Start Web Server
@@ -403,25 +350,25 @@ func main() {
 }
 
 func getCitiesCount() {
-	numCities, _ = commondao.GetCitiesCount()
-	Logger.Printf("Number of Cities: %d", numCities)
+	//	numCities, _ = commonDAO.GetCitiesCount()
+	//	Logger.Printf("Number of Cities: %d", numCities)
 }
 
 func getPeopleCount() {
-	numPeople, _ = commondao.GetPeopleCount()
-	Logger.Printf("Nummber of People in world: %d", numPeople)
+	//	numPeople, _ = commonDAO.GetPeopleCount()
+	//	Logger.Printf("Nummber of People in world: %d", numPeople)
 }
 
 func getBuildingsCount() {
-	numBuildings, _ = commondao.GetBuildingsCount()
-	Logger.Printf("Nummber of Buildings in world: %d", numBuildings)
+	//	numBuildings, _ = commonDAO.GetBuildingsCount()
+	//	Logger.Printf("Nummber of Buildings in world: %d", numBuildings)
 }
 
 func aWholeNewWorld() {
 	LogToConsole("Starting a whole new world... don't you dare close your eyes!")
 	// Create a new city somewhere random in the world that is 1 sq mile
-	newCity := commonModels.City{}
-	newCity.ID = bson.NewObjectId()
+	newCity := models.City{}
+	newCity.ID, _ = uuid.NewV4()
 
 	cityNameGenURL := "https://www.mithrilandmages.com/utilities/CityNamesServer.php?count=1&dataset=united_states&_=1531715721885"
 	req, err := http.NewRequest("GET", cityNameGenURL, nil)
@@ -438,7 +385,7 @@ func aWholeNewWorld() {
 	newCity.TopLeft = Point{X: randomdata.Number(5274720), Y: randomdata.Number(5274720)}
 	newCity.BottomRight = Point{X: newCity.TopLeft.X + 5280, Y: newCity.TopLeft.Y + 5280}
 	newCity.Established = settings.LastTime
-	err = commondao.CreateCity(newCity)
+	err = commonDAO.CreateCity(newCity)
 	FailOnError(err, "Failed to create new city")
 	Logger.Printf("Created City: %s", newCity.Name)
 
@@ -446,30 +393,30 @@ func aWholeNewWorld() {
 
 }
 
-func canWeFixIt(city commonModels.City) {
+func canWeFixIt(city models.City) {
 	LogToConsole("Yes we can!")
-	newBuilding := commonModels.Building{}
-	newBuilding.ID = bson.NewObjectId()
+	newBuilding := models.Building{}
+	newBuilding.ID, _ = uuid.NewV4()
 	newBuilding.BuildDate = settings.LastTime
 	newBuilding.Floors = 1
 	newBuilding.MaxOccupancy = 20
 	newBuilding.Name = "Home"
-	newBuilding.Type = commonModels.House
+	newBuilding.Type = models.House
 	newBuilding.TopLeft = Point{X: randomdata.Number(city.TopLeft.X, city.BottomRight.X-208), Y: randomdata.Number(city.TopLeft.Y, city.BottomRight.Y-208)}
 	newBuilding.BottomRight = Point{X: newBuilding.TopLeft.X + 208, Y: newBuilding.TopLeft.Y + 208}
 	newBuilding.CityID = city.ID
-	err := commondao.CreateBuilding(newBuilding)
-	FailOnError(err, "Failed to create building")
+	//	err := commonDAO.CreateBuilding(newBuilding)
+	//	FailOnError(err, "Failed to create building")
 	LogToConsole("Created a new home, Updating City")
-	err = commondao.UpdateCity(city)
-	FailOnError(err, "Failed to update City")
+	//	err = commonDAO.UpdateCity(city)
+	//	FailOnError(err, "Failed to update City")
 	justTheTwoOfUs(newBuilding)
 }
 
-func justTheTwoOfUs(building commonModels.Building) {
+func justTheTwoOfUs(building models.Building) {
 	LogToConsole("You and I")
-	male := commonModels.Person{}
-	female := commonModels.Person{}
+	male := models.Person{}
+	female := models.Person{}
 	boyNameGenURL := "http://names.drycodes.com/1?nameOptions=boy_names"
 	girlNameGenURL := "http://names.drycodes.com/1?nameOptions=girl_names"
 	reqBoy, err := http.NewRequest("GET", boyNameGenURL, nil)
@@ -501,7 +448,7 @@ func justTheTwoOfUs(building commonModels.Building) {
 	}
 	male.Birthdate = settings.LastTime.AddDate(-18, 0, 0)
 	female.Birthdate = male.Birthdate
-	male.ChildrenIDs = []bson.ObjectId{}
+	male.ChildrenIDs = []*uuid.UUID{}
 	female.ChildrenIDs = male.ChildrenIDs
 	male.CurrentBuilding = building.ID
 	female.CurrentBuilding = male.CurrentBuilding
@@ -513,8 +460,8 @@ func justTheTwoOfUs(building commonModels.Building) {
 	female.Health = 100
 	male.HomeBuilding = male.CurrentBuilding
 	female.HomeBuilding = male.HomeBuilding
-	male.ID = bson.NewObjectId()
-	female.ID = bson.NewObjectId()
+	male.ID, _ = uuid.NewV4()
+	female.ID, _ = uuid.NewV4()
 	male.NewToBuilding = false
 	female.NewToBuilding = false
 	male.Traveling = false
@@ -523,10 +470,10 @@ func justTheTwoOfUs(building commonModels.Building) {
 	female.WorkBuilding = female.HomeBuilding
 	male.Spouse = female.ID
 	female.Spouse = male.ID
-	errM := commondao.CreatePerson(male)
-	FailOnError(errM, "Failed to create male")
-	errF := commondao.CreatePerson(female)
-	FailOnError(errF, "Failed to create female")
+	//	errM := commonDAO.CreatePerson(male)
+	//	FailOnError(errM, "Failed to create male")
+	//	errF := commonDAO.CreatePerson(female)
+	//	FailOnError(errF, "Failed to create female")
 
 	Logger.Printf("People Names: %s %s, %s %s", male.FirstName, male.LastName, female.FirstName, female.LastName)
 }
