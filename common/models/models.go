@@ -4,32 +4,32 @@ import (
 	. "image"
 	"time"
 
-	"gopkg.in/mgo.v2/bson"
+	"github.com/nu7hatch/gouuid"
 )
 
 // Trigger triggers for the world
 type Trigger struct {
-	Name  string `json:"name" bson:"name"`
-	Value string `json:"value" bson:"value"`
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 // SpeedLimit
 type SpeedLimit struct {
-	Location string `json:"location" bson:"location"`
-	Value    int    `json:"value" bson:"value"`
+	Location string `json:"location"`
+	Value    int    `json:"value"`
 }
 
 // Settings settings for the world
 type Settings struct {
-	ID                      bson.ObjectId `json:"id" bson:"_id,omitempty"`
-	ViolentCrimeRate        float32       `json:"violentCrimeRate" bson:"violentCrimeRate"`
-	MurderRate              float32       `json:"murderRate" bson:"murderRate"`
-	CarAccidentFatalityRate float32       `json:"carAccidentFatalityRate" bson:"carAccidentFatalityRate"`
-	Diseases                []Disease     `json:"diseases" bson:"diseases"`
-	WorldSpeed              int           `json:"worldSpeed" bson:"worldSpeed"`
-	LastTime                time.Time     `json:"lastTime" bson:"lastTime"`
-	Triggers                []Trigger     `json:"triggers" bson:"triggers"`
-	SpeedLimits             []SpeedLimit  `json:"speedLimits" bson:"speedLimits"`
+	ID                      uuid.UUID    `json:"id"`
+	ViolentCrimeRate        float32      `json:"violentCrimeRate"`
+	MurderRate              float32      `json:"murderRate"`
+	CarAccidentFatalityRate float32      `json:"carAccidentFatalityRate"`
+	Diseases                []Disease    `json:"diseases"`
+	WorldSpeed              int          `json:"worldSpeed"`
+	LastTime                time.Time    `json:"lastTime"`
+	Triggers                []Trigger    `json:"triggers"`
+	SpeedLimits             []SpeedLimit `json:"speedLimits"`
 }
 
 // WorldQueueMessage Messages sent to World Queue
@@ -51,13 +51,13 @@ type WorldCityQueueMessage struct {
 }
 
 type CityWorkerQueueMessage struct {
-	WorldSettings Settings      `json:"worldSettings"`
-	BuildingID    bson.ObjectId `json:"buildingid"`
+	WorldSettings Settings  `json:"worldSettings"`
+	BuildingID    uuid.UUID `json:"buildingid"`
 }
 
 type TrafficWorkerQueueMessage struct {
-	WorldSettings Settings      `json:"worldSettings"`
-	PersonID      bson.ObjectId `json:"personid"`
+	WorldSettings Settings  `json:"worldSettings"`
+	PersonID      uuid.UUID `json:"personid"`
 }
 
 type ControllerType int
@@ -81,11 +81,11 @@ type Worker struct {
 
 // City city
 type City struct {
-	ID          bson.ObjectId `json:"id" bson:"_id,omitempty"`
-	Name        string        `json:"name" bson:"name"`
-	TopLeft     Point         `json:"topleft" bson:"topleft"`
-	BottomRight Point         `json:"bottomright" bson:"bottomright"`
-	Established time.Time     `json:"established" bson:"established"`
+	ID          uuid.UUID `json:"id"`
+	Name        string    `json:"name"`
+	TopLeft     Point     `json:"topleft"`
+	BottomRight Point     `json:"bottomright"`
+	Established time.Time `json:"established"`
 }
 
 // BuildingType used to identify the type of building
@@ -105,15 +105,15 @@ const (
 
 // Building a building in a city
 type Building struct {
-	ID           bson.ObjectId `json:"id" bson:"_id,omitempty"`
-	Name         string        `json:"name" bson:"name"`
-	TopLeft      Point         `json:"topleft" bson:"topleft"`
-	BottomRight  Point         `json:"bottomright" bson:"bottomright"`
-	BuildDate    time.Time     `json:"builddate" bson:"builddate"`
-	Type         BuildingType  `json:"type" bson:"type"`
-	Floors       int           `json:"floors" bson:"floors"`
-	MaxOccupancy int           `json:"maxoccupancy" bson:"maxoccupancy"`
-	CityID       bson.ObjectId `json:"cityid" bson:"cityid"`
+	ID           uuid.UUID    `json:"id"`
+	Name         string       `json:"name"`
+	TopLeft      Point        `json:"topleft"`
+	BottomRight  Point        `json:"bottomright"`
+	BuildDate    time.Time    `json:"builddate"`
+	Type         BuildingType `json:"type"`
+	Floors       int          `json:"floors"`
+	MaxOccupancy int          `json:"maxoccupancy"`
+	CityID       uuid.UUID    `json:"cityid"`
 }
 
 // DeathType used to identify how person died
@@ -128,32 +128,32 @@ const (
 
 // Person a person
 type Person struct {
-	ID              bson.ObjectId   `json:"id" bson:"_id,omitempty"`
-	Birthdate       time.Time       `json:"birthdate" bson:"birthdate"`
-	FirstName       string          `json:"firstname" bson:"firstname"`
-	LastName        string          `json:"lastname" bson:"lastname"`
-	ChildrenIDs     []bson.ObjectId `json:"childrenIDs" bson:"childrenIDs"`
-	CurrentBuilding bson.ObjectId   `json:"currentbuilding" bson:"currentbuilding,omitempty"`
-	CurrentXY       Point           `json:"currentxy" bson:"currentxy"`
-	Traveling       bool            `json:"traveling" bson:"traveling"`
-	NewToBuilding   bool            `json:"newtobuilding" bson:"newtobuilding"`
-	HomeBuilding    bson.ObjectId   `json:"homebuilding" bson:"homebuilding,omitempty"`
-	WorkBuilding    bson.ObjectId   `json:"workbuilding" bson:"workbuilding,omitempty"`
-	Health          int             `json:"health" bson:"health"`
-	Illness         bson.ObjectId   `json:"illness" bson:"illness,omitempty"`
-	Happiness       int             `json:"happiness" bson:"happiness"`
-	DeathDate       time.Time       `json:"deathdate" bson:"deathdate"`
-	CauseOfDeath    DeathType       `json:"causeofdeath" bson:"causeofdeath"`
-	Spouse          bson.ObjectId   `json:"spouse" bson:"spouse"`
+	ID              uuid.UUID   `json:"id"`
+	Birthdate       time.Time   `json:"birthdate"`
+	FirstName       string      `json:"firstname"`
+	LastName        string      `json:"lastname"`
+	ChildrenIDs     []uuid.UUID `json:"childrenIDs"`
+	CurrentBuilding uuid.UUID   `json:"currentbuilding"`
+	CurrentXY       Point       `json:"currentxy"`
+	Traveling       bool        `json:"traveling"`
+	NewToBuilding   bool        `json:"newtobuilding"`
+	HomeBuilding    uuid.UUID   `json:"homebuilding"`
+	WorkBuilding    uuid.UUID   `json:"workbuilding"`
+	Health          int         `json:"health"`
+	Illness         uuid.UUID   `json:"illness"`
+	Happiness       int         `json:"happiness"`
+	DeathDate       time.Time   `json:"deathdate"`
+	CauseOfDeath    DeathType   `json:"causeofdeath"`
+	Spouse          uuid.UUID   `json:"spouse"`
 }
 
 // Disease types of diseases
 type Disease struct {
-	Name            string  `json:"name" bson:"name"`
-	DaysDetected    int     `json:"daysDetected" bson:"daysDetected"`
-	AvgDaysIll      int     `json:"avgDaysIll" bson:"avgDaysIll"`
-	LethalityRate   float32 `json:"lethalityRate" bson:"lethalityRate"`
-	Infectious      bool    `json:"infectious" bson:"infectious"`
-	InfectionChance float32 `json:"infectionChance" bson:"infectionChance"`
-	Severity        float32 `json:"severity" bson:"severity"`
+	Name            string  `json:"name"`
+	DaysDetected    int     `json:"daysDetected"`
+	AvgDaysIll      int     `json:"avgDaysIll"`
+	LethalityRate   float32 `json:"lethalityRate"`
+	Infectious      bool    `json:"infectious"`
+	InfectionChance float32 `json:"infectionChance"`
+	Severity        float32 `json:"severity"`
 }
